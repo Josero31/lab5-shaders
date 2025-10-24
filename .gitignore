@@ -1,0 +1,31 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDE / Editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Sistema Operativo
+Thumbs.db
+Desktop.ini
+
+# Screenshots (opcional - descomenta si quieres incluir las capturas en el repo)
+# screenshots/
+
+# Archivos temporales
+*.tmp
+*.log
+*.bak
+
+# Compilación
+*.exe
+*.dll
+*.so
+*.dylib
