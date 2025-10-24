@@ -57,284 +57,377 @@ pub fn fragment_shader(fragment: &Fragment, uniforms: &Uniforms, shader_type: u8
     }
 }
 
-// ===== SHADER 1: SOL (ESTRELLA) =====
-// Capas: 1) Plasma base, 2) Corona animada, 3) Manchas solares, 4) Brillo radiante
-fn sun_shader(fragment: &Fragment, uniforms: &Uniforms) -> Color {
-    let pos = fragment.vertex_position;
-    let time = uniforms.time as f32 * 0.01;
-    
-    // Capa 1: Plasma base con movimiento
-    let plasma_freq = 3.0;
-    let plasma1 = ((pos.x * plasma_freq + time).sin() * (pos.y * plasma_freq + time * 1.3).cos()).abs();
-    let plasma2 = ((pos.y * plasma_freq - time * 0.8).sin() * (pos.z * plasma_freq + time).cos()).abs();
-    let plasma = (plasma1 + plasma2) * 0.5;
-    
-    // Capa 2: Corona animada (más brillante en los bordes)
-    let distance_from_center = (pos.x * pos.x + pos.y * pos.y + pos.z * pos.z).sqrt();
-    let corona_effect = (1.0 - distance_from_center).max(0.0);
-    let corona_pulse = (time * 2.0).sin() * 0.5 + 0.5;
-    let corona = corona_effect * corona_pulse * 0.3;
-    
-    // Capa 3: Manchas solares oscuras
-    let spot_freq = 8.0;
-    let spot = ((pos.x * spot_freq).sin() * (pos.y * spot_freq).cos() * (pos.z * spot_freq + time).sin()).abs();
-    let dark_spots = if spot > 0.85 { 0.6 } else { 1.0 };
-    
-    // Capa 4: Brillo radiante desde el centro
-    let radial_glow = 1.0 - distance_from_center.min(1.0);
-    let glow_intensity = radial_glow * radial_glow * 0.5;
-    
-    // Combinar todas las capas
-    let base_color = Color::new(255, 100, 0); // Naranja brillante
-    let bright_color = Color::new(255, 255, 100); // Amarillo brillante
-    let corona_color = Color::new(255, 200, 50); // Amarillo corona
-    
-    let mixed = base_color.lerp(&bright_color, plasma);
-    let with_corona = mixed.lerp(&corona_color, corona);
-    let with_spots = with_corona.mul(dark_spots);
-    let final_color = with_spots.mul(1.0 + glow_intensity);
-    
-    final_color
+// Funciones matemáticas rápidas para patrones procedurales
+#[inline(always)]
+fn fast_noise(p: Vec3) -> f32 {
+    ((p.x * 12.9898 + p.y * 78.233 + p.z * 37.719).sin() * 43758.5453).fract()
 }
 
-// ===== SHADER 2: PLANETA ROCOSO (estilo Tierra/Marte) =====
-// Capas: 1) Continentes, 2) Océanos, 3) Nubes, 4) Atmósfera
-fn rocky_planet_shader(fragment: &Fragment, uniforms: &Uniforms) -> Color {
-    let pos = fragment.vertex_position;
-    let time = uniforms.time as f32 * 0.005;
+#[inline(always)]
+fn pattern1(p: Vec3, time: f32) -> f32 {
+    let a = (p.x * 3.0 + time).sin();
+    let b = (p.y * 3.0 - time * 0.5).cos();
+    let c = (p.z * 3.0 + time * 0.3).sin();
+    (a + b + c) * 0.333
+}
+
+#[inline(always)]
+fn pattern2(p: Vec3, time: f32) -> f32 {
+    let freq = 8.0;
+    ((p.x * freq).sin() * (p.y * freq).cos() + (p.z * freq + time).sin()) * 0.5
+}
+
+#[inline(always)]
+fn voronoi_simple(p: Vec3) -> f32 {
+    let pi = Vec3::new(p.x.floor(), p.y.floor(), p.z.floor());
+    let pf = Vec3::new(p.x.fract(), p.y.fract(), p.z.fract());
     
-    // Capa 1: Continentes (noise complejo)
-    let land_freq = 5.0;
-    let land_noise1 = ((pos.x * land_freq).sin() * (pos.y * land_freq).cos()).abs();
-    let land_noise2 = ((pos.y * land_freq * 1.5).sin() * (pos.z * land_freq * 1.5).cos()).abs();
-    let land = (land_noise1 + land_noise2) * 0.5;
-    
-    // Capa 2: Océanos vs tierra
-    let is_land = land > 0.5;
-    let base_color = if is_land {
-        // Variación de continentes (marrón/verde)
-        let variation = ((pos.x * 10.0).sin() * (pos.z * 10.0).cos()).abs();
-        if variation > 0.6 {
-            Color::new(34, 139, 34) // Verde (vegetación)
-        } else {
-            Color::new(139, 90, 43) // Marrón (tierra)
+    let mut min_dist: f32 = 2.0;
+    for i in -1..=1 {
+        for j in -1..=1 {
+            let neighbor = Vec3::new(i as f32, j as f32, 0.0);
+            let point = neighbor + Vec3::new(
+                fast_noise(pi + neighbor),
+                fast_noise(pi + neighbor + Vec3::new(0.1, 0.1, 0.1)),
+                0.0
+            );
+            let diff = point - pf;
+            let dist = diff.x * diff.x + diff.y * diff.y;
+            min_dist = min_dist.min(dist);
         }
+    }
+    min_dist.sqrt()
+}
+
+// ===== SHADER 1: SOL CON PLASMA ANIMADO =====
+fn sun_shader(fragment: &Fragment, uniforms: &Uniforms) -> Color {
+    let pos = fragment.vertex_position * 3.0;
+    let time = uniforms.time as f32 * 0.02;
+    
+    // Plasma con múltiples ondas
+    let wave1 = ((pos.x * 4.0 + time).sin() + (pos.y * 3.0 - time * 0.7).cos()) * 0.5;
+    let wave2 = ((pos.y * 5.0 + time * 1.3).sin() + (pos.z * 4.0 + time).sin()) * 0.5;
+    let wave3 = ((pos.x * 2.0 - time * 0.5).cos() * (pos.y * 2.0 + time * 0.8).sin()) * 0.5;
+    
+    let plasma = (wave1 + wave2 + wave3) * 0.5 + 0.5;
+    
+    // Vórtices rotativos
+    let angle = pos.y.atan2(pos.x);
+    let radius = (pos.x * pos.x + pos.y * pos.y).sqrt();
+    let spiral = ((angle * 8.0 + radius * 6.0 - time * 3.0).sin() + 1.0) * 0.5;
+    
+    // Manchas solares (zonas oscuras)
+    let spot_pattern = ((pos.x * 8.0).sin() * (pos.y * 8.0).cos() + (pos.z * 8.0 + time * 0.1).sin());
+    let spots = if spot_pattern > 0.8 { 0.5 } else { 1.0 };
+    
+    // Pulsación de corona
+    let dist = (pos.x * pos.x + pos.y * pos.y + pos.z * pos.z).sqrt();
+    let corona = (1.0 - dist * 0.3).max(0.0).powf(3.0);
+    let pulse = (time * 4.0).sin() * 0.2 + 0.8;
+    
+    // Gradiente de temperatura
+    let temp = plasma * spiral;
+    let base_color = if temp > 0.7 {
+        Color::new(255, 255, 220) // Blanco caliente
+    } else if temp > 0.5 {
+        Color::new(255, 240, 150) // Amarillo brillante
+    } else if temp > 0.3 {
+        Color::new(255, 180, 80) // Naranja
     } else {
-        Color::new(30, 60, 140) // Azul océano
+        Color::new(255, 120, 40) // Rojo-naranja
     };
     
-    // Capa 3: Nubes animadas
-    let cloud_freq = 8.0;
-    let cloud_offset = time * 0.5;
-    let clouds = ((pos.x * cloud_freq + cloud_offset).sin() * 
-                  (pos.y * cloud_freq).cos() * 
-                  (pos.z * cloud_freq - cloud_offset * 0.7).sin()).abs();
-    let cloud_threshold = 0.7;
+    let with_spots = base_color.mul(spots);
+    with_spots.mul(1.0 + corona * pulse * 0.8)
+}
+
+// ===== SHADER 2: PLANETA TIERRA CON CONTINENTES Y NUBES =====
+fn rocky_planet_shader(fragment: &Fragment, uniforms: &Uniforms) -> Color {
+    let pos = fragment.vertex_position * 5.0;
+    let time = uniforms.time as f32 * 0.005;
     
-    // Capa 4: Atmósfera (brillo en los bordes)
-    let distance_from_center = (pos.x * pos.x + pos.y * pos.y + pos.z * pos.z).sqrt();
-    let atmosphere = (1.0 - distance_from_center).max(0.0).powf(3.0) * 0.2;
-    let atmo_color = Color::new(100, 150, 255);
+    // Generar continentes con patrón Voronoi
+    let continents = voronoi_simple(pos * 0.8);
+    let mountains = ((pos.x * 10.0).sin() * (pos.y * 10.0).cos() + (pos.z * 10.0).sin() + 1.0) * 0.5;
     
-    let mut final_color = base_color;
+    let terrain_height = continents * 0.7 + mountains * 0.3;
     
-    // Aplicar nubes
-    if clouds > cloud_threshold {
+    let is_ocean = terrain_height < 0.35;
+    let is_land = terrain_height >= 0.35 && terrain_height < 0.55;
+    let is_mountain = terrain_height >= 0.55 && terrain_height < 0.65;
+    let is_snow = terrain_height >= 0.65;
+    
+    // Colores base del terreno
+    let mut color = if is_ocean {
+        let depth = (0.35 - terrain_height) * 5.0;
+        if depth > 0.6 {
+            Color::new(10, 40, 100) // Océano profundo
+        } else {
+            Color::new(30, 80, 160) // Océano normal
+        }
+    } else if is_snow {
+        Color::new(250, 250, 255) // Nieve
+    } else if is_mountain {
+        Color::new(130, 110, 90) // Montañas rocosas
+    } else {
+        // Variación de vegetación
+        let veg = ((pos.x * 15.0).sin() + (pos.y * 15.0).cos() + 1.0) * 0.5;
+        if veg > 0.6 {
+            Color::new(50, 140, 50) // Bosques densos
+        } else if veg > 0.4 {
+            Color::new(100, 160, 70) // Pastizales
+        } else {
+            Color::new(210, 190, 140) // Desiertos
+        }
+    };
+    
+    // Sistema de nubes dinámicas
+    let cloud1 = ((pos.x * 3.0 + time * 20.0).sin() + (pos.y * 3.0).cos() + (pos.z * 3.0 + time * 15.0).sin() + 1.5) * 0.33;
+    let cloud2 = ((pos.x * 6.0 - time * 15.0).cos() + (pos.y * 6.0).sin() + 1.0) * 0.5;
+    let clouds = (cloud1 * 0.7 + cloud2 * 0.3).clamp(0.0, 1.0);
+    
+    if clouds > 0.6 {
+        let density = ((clouds - 0.6) / 0.4).min(1.0);
         let cloud_color = Color::new(255, 255, 255);
-        final_color = final_color.lerp(&cloud_color, (clouds - cloud_threshold) * 2.0);
+        color = color.lerp(&cloud_color, density * 0.85);
     }
     
-    // Aplicar atmósfera
-    final_color = final_color.lerp(&atmo_color, atmosphere);
+    // Atmósfera azul
+    let dist = (pos.x * pos.x + pos.y * pos.y + pos.z * pos.z).sqrt();
+    let atmosphere = ((1.0 - dist * 0.2).max(0.0)).powf(5.0);
+    if atmosphere > 0.0 {
+        let atmo_color = Color::new(100, 150, 255);
+        color = color.lerp(&atmo_color, atmosphere * 0.4);
+    }
     
-    // Iluminación básica
-    let light_dir = Vec3::new(1.0, 1.0, 1.0).normalize();
+    // Iluminación
+    let light_dir = Vec3::new(0.8, 0.5, 1.0).normalize();
+    let normal = fragment.normal.normalize();
+    let diffuse = normal.dot(&light_dir).max(0.15);
+    
+    color.mul(diffuse)
+}
+
+// ===== SHADER 3: JÚPITER CON BANDAS Y GRAN MANCHA ROJA =====
+fn gas_giant_shader(fragment: &Fragment, uniforms: &Uniforms) -> Color {
+    let pos = fragment.vertex_position * 3.5;
+    let time = uniforms.time as f32 * 0.01;
+    
+    // Bandas horizontales con turbulencia
+    let base_bands = pos.y * 18.0;
+    let turb1 = ((pos.x * 5.0 + time * 2.0).sin() + (pos.z * 5.0 + time).cos()) * 0.8;
+    let turb2 = ((pos.x * 10.0 - time).cos() + (pos.z * 10.0).sin()) * 0.3;
+    
+    let band_pos = base_bands + turb1 + turb2;
+    let bands = (band_pos.sin() + 1.0) * 0.5;
+    
+    // Más turbulencia atmosférica
+    let atmosphere_chaos = ((pos.x * 8.0 + time * 1.5).sin() * (pos.y * 6.0).cos() + (pos.z * 7.0 - time * 0.8).sin() + 1.5) * 0.33;
+    let band_value = (bands * 0.6 + atmosphere_chaos * 0.4).clamp(0.0, 1.0);
+    
+    // Paleta joviana
+    let color1 = Color::new(250, 230, 190); // Beige muy claro
+    let color2 = Color::new(170, 120, 80);  // Marrón
+    let color3 = Color::new(210, 180, 140); // Beige medio
+    let color4 = Color::new(255, 245, 220); // Blanco cremoso
+    
+    let mut final_color = if band_value < 0.25 {
+        color1.lerp(&color2, band_value * 4.0)
+    } else if band_value < 0.5 {
+        color2.lerp(&color3, (band_value - 0.25) * 4.0)
+    } else if band_value < 0.75 {
+        color3.lerp(&color4, (band_value - 0.5) * 4.0)
+    } else {
+        color4.lerp(&color1, (band_value - 0.75) * 4.0)
+    };
+    
+    // GRAN MANCHA ROJA visible y animada
+    let spot_center = Vec3::new(0.6, -0.3, 0.0);
+    let dx = pos.x - spot_center.x;
+    let dy = (pos.y - spot_center.y) * 1.4; // Óvalo alargado
+    let dz = pos.z - spot_center.z;
+    let dist_to_spot = (dx * dx + dy * dy + dz * dz).sqrt();
+    
+    if dist_to_spot < 0.5 {
+        let spot_factor = (1.0 - dist_to_spot / 0.5).max(0.0);
+        
+        // Vórtice rotativo en la mancha
+        let angle = dy.atan2(dx);
+        let swirl = ((angle * 5.0 + dist_to_spot * 15.0 - time * 3.0).sin() + 1.0) * 0.5;
+        
+        let red_intensity = spot_factor * (0.7 + swirl * 0.3);
+        let red_color = if swirl > 0.6 {
+            Color::new(240, 100, 70) // Rojo brillante
+        } else {
+            Color::new(190, 60, 40) // Rojo oscuro
+        };
+        
+        final_color = final_color.lerp(&red_color, red_intensity * 0.95);
+    }
+    
+    // Iluminación
+    let light_dir = Vec3::new(1.0, 0.3, 0.8).normalize();
     let normal = fragment.normal.normalize();
     let diffuse = normal.dot(&light_dir).max(0.2);
     
     final_color.mul(diffuse)
 }
 
-// ===== SHADER 3: GIGANTE GASEOSO (estilo Júpiter) =====
-// Capas: 1) Bandas atmosféricas, 2) Turbulencias, 3) Gran mancha roja, 4) Variación de color
-fn gas_giant_shader(fragment: &Fragment, uniforms: &Uniforms) -> Color {
-    let pos = fragment.vertex_position;
-    let time = uniforms.time as f32 * 0.008;
+// ===== SHADER 4: SATURNO CON ANILLOS ESPECTACULARES Y VISIBLES =====
+fn ringed_planet_shader(fragment: &Fragment, uniforms: &Uniforms) -> Color {
+    let pos = fragment.vertex_position * 3.0;
+    let time = uniforms.time as f32 * 0.006;
     
-    // Capa 1: Bandas atmosféricas horizontales
-    let band_freq = 15.0;
-    let band_y = pos.y + (pos.x * 2.0).sin() * 0.1; // Ondulación
-    let bands = ((band_y * band_freq).sin() + 1.0) * 0.5;
+    // Planeta con bandas suaves
+    let bands = ((pos.y * 20.0 + ((pos.x * 3.0).sin() + (pos.z * 3.0).cos()) * 0.5).sin() + 1.0) * 0.5;
+    let color1 = Color::new(255, 240, 210);
+    let color2 = Color::new(240, 220, 180);
+    let mut planet_color = color1.lerp(&color2, bands);
     
-    // Capa 2: Turbulencias en las bandas
-    let turb_freq = 20.0;
-    let turbulence = ((pos.x * turb_freq + time).sin() * 
-                      (pos.y * turb_freq * 0.5).cos() * 
-                      (pos.z * turb_freq - time * 0.8).sin()).abs();
-    let turb_offset = turbulence * 0.2;
+    // ANILLOS ULTRA VISIBLES
+    let ring_dist = (pos.x * pos.x + pos.z * pos.z).sqrt();
+    let y_abs = pos.y.abs();
     
-    // Capa 3: Gran mancha roja (tormenta)
-    let spot_center = Vec3::new(0.3, -0.2, 0.0);
-    let dist_to_spot = ((pos.x - spot_center.x).powi(2) + 
-                        (pos.y - spot_center.y).powi(2) + 
-                        (pos.z - spot_center.z).powi(2)).sqrt();
-    let red_spot = (1.0 - (dist_to_spot / 0.3).min(1.0)).max(0.0);
-    let spot_swirl = ((pos.x * 30.0 + time * 2.0).sin() * (pos.y * 30.0).cos()).abs();
-    let spot_intensity = red_spot * spot_swirl;
-    
-    // Capa 4: Colores de las bandas (beige/marrón/blanco)
-    let band_value = bands + turb_offset;
-    let color1 = Color::new(220, 180, 140); // Beige claro
-    let color2 = Color::new(180, 120, 80);  // Marrón
-    let color3 = Color::new(240, 220, 200); // Casi blanco
-    
-    let mut final_color = if band_value < 0.33 {
-        color1.lerp(&color2, band_value * 3.0)
-    } else if band_value < 0.66 {
-        color2.lerp(&color3, (band_value - 0.33) * 3.0)
-    } else {
-        color3.lerp(&color1, (band_value - 0.66) * 3.0)
-    };
-    
-    // Aplicar la mancha roja
-    if spot_intensity > 0.3 {
-        let red_color = Color::new(200, 80, 60);
-        final_color = final_color.lerp(&red_color, spot_intensity);
+    // Zona de anillos expandida
+    if y_abs < 0.18 && ring_dist > 0.75 && ring_dist < 2.0 {
+        // Patrones de anillos concéntricos
+        let ring_freq = ring_dist * 50.0;
+        let ring_bands = (ring_freq.sin() + 1.0) * 0.5;
+        
+        // Variación de brillo por anillo
+        let brightness_var = ((ring_dist * 30.0 + time * 3.0).sin() + 1.0) * 0.5;
+        
+        // Divisiones de Cassini (gaps oscuros)
+        let is_gap = (ring_dist > 1.0 && ring_dist < 1.15) ||
+                     (ring_dist > 1.5 && ring_dist < 1.55) ||
+                     (ring_dist > 1.75 && ring_dist < 1.78);
+        
+        if is_gap {
+            // Gaps con transparencia (mostrar planeta oscurecido)
+            planet_color = planet_color.mul(0.4);
+        } else {
+            // Anillos visibles con colores variados
+            let ring_color = if ring_bands > 0.7 {
+                Color::new(245, 225, 190) // Anillos claros
+            } else if ring_bands > 0.4 {
+                Color::new(210, 185, 145) // Anillos medios
+            } else {
+                Color::new(180, 160, 125) // Anillos oscuros
+            };
+            
+            // Transparencia basada en distancia al plano
+            let ring_alpha = (1.0 - (y_abs / 0.18).powf(1.2)) * 0.95;
+            let ring_bright = 0.9 + brightness_var * 0.2;
+            
+            planet_color = planet_color.lerp(&ring_color, ring_alpha);
+            planet_color = planet_color.mul(ring_bright);
+        }
     }
     
-    // Iluminación básica
-    let light_dir = Vec3::new(1.0, 0.5, 1.0).normalize();
-    let normal = fragment.normal.normalize();
-    let diffuse = normal.dot(&light_dir).max(0.3);
-    
-    final_color.mul(diffuse)
-}
-
-// ===== SHADER 4: PLANETA CON ANILLOS (estilo Saturno) =====
-// Capas: 1) Base gaseosa, 2) Bandas sutiles, 3) Efecto de anillo (en el planeta), 4) Sombra de anillos
-fn ringed_planet_shader(fragment: &Fragment, uniforms: &Uniforms) -> Color {
-    let pos = fragment.vertex_position;
-    let time = uniforms.time as f32 * 0.005;
-    
-    // Capa 2: Bandas atmosféricas sutiles
-    let band_freq = 12.0;
-    let bands = ((pos.y * band_freq + (pos.x * 3.0).sin() * 0.15).sin() + 1.0) * 0.5;
-    let band_color1 = Color::new(230, 210, 170);
-    let band_color2 = Color::new(250, 230, 190);
-    let banded = band_color1.lerp(&band_color2, bands);
-    
-    // Capa 3: Textura adicional (pequeñas turbulencias)
-    let turb = ((pos.x * 25.0 + time).sin() * (pos.z * 25.0).cos()).abs();
-    let turb_factor = 0.9 + turb * 0.1;
-    
-    // Capa 4: Sombra de los anillos proyectada en el planeta
-    let ring_shadow_y = pos.y;
-    let ring_shadow = if ring_shadow_y.abs() < 0.15 {
-        let shadow_pattern = ((pos.x * 50.0).sin() * (pos.z * 50.0).cos()).abs();
-        0.5 + shadow_pattern * 0.2
-    } else {
-        1.0
-    };
-    
-    let final_color = banded.mul(turb_factor * ring_shadow);
+    // Sombra de anillos sobre el planeta
+    if y_abs < 0.2 && ring_dist < 0.9 {
+        let shadow_bands = (ring_dist * 50.0).sin() * 0.5 + 0.5;
+        let shadow = 0.6 + shadow_bands * 0.3;
+        planet_color = planet_color.mul(shadow);
+    }
     
     // Iluminación
-    let light_dir = Vec3::new(1.0, 0.8, 1.0).normalize();
+    let light_dir = Vec3::new(1.0, 0.6, 0.8).normalize();
     let normal = fragment.normal.normalize();
     let diffuse = normal.dot(&light_dir).max(0.25);
     
-    final_color.mul(diffuse)
+    planet_color.mul(diffuse)
 }
 
-// ===== SHADER 5: PLANETA CON LUNA (rocoso con océanos de lava) =====
-// Capas: 1) Lava base, 2) Corteza oscura, 3) Grietas brillantes, 4) Efecto de calor
+// ===== SHADER 5: PLANETA VOLCÁNICO CON LAVA BRILLANTE =====
 fn planet_with_moon_shader(fragment: &Fragment, uniforms: &Uniforms) -> Color {
-    let pos = fragment.vertex_position;
-    let time = uniforms.time as f32 * 0.01;
+    let pos = fragment.vertex_position * 4.0;
+    let time = uniforms.time as f32 * 0.015;
     
-    // Capa 1: Lava base (naranja/rojo)
-    let lava_pulse = (time * 3.0).sin() * 0.5 + 0.5;
-    let lava_color = Color::new(255, 100, 0);
+    // Superficie con patrón Voronoi para grietas
+    let cracks = voronoi_simple(pos * 1.5);
+    let fine_cracks = ((pos.x * 20.0 + time).sin() * (pos.y * 20.0).cos() + (pos.z * 20.0 - time).sin() + 1.5) * 0.33;
     
-    // Capa 2: Corteza oscura (negro/gris)
-    let crust_freq = 8.0;
-    let crust_noise = ((pos.x * crust_freq).sin() * 
-                       (pos.y * crust_freq).cos() * 
-                       (pos.z * crust_freq).sin()).abs();
-    let is_crust = crust_noise > 0.4;
+    let is_lava = cracks < 0.4 || fine_cracks > 0.8;
     
-    // Capa 3: Grietas brillantes de lava
-    let crack_freq = 20.0;
-    let cracks = ((pos.x * crack_freq + time).sin() * 
-                  (pos.y * crack_freq - time * 0.7).cos()).abs();
-    let has_crack = cracks > 0.85;
-    
-    // Capa 4: Efecto de calor radiante
-    let heat_glow = ((pos.x * 5.0 + time * 2.0).sin() * 
-                     (pos.z * 5.0 - time).cos()).abs() * 0.3;
-    
-    let crust_color = Color::new(40, 40, 40);
-    let crack_color = Color::new(255, 150, 0);
-    
-    let mut final_color = if is_crust {
-        crust_color
+    let mut color = if is_lava {
+        // Lava con pulsación de temperatura
+        let heat_pattern = ((pos.x * 6.0 + time * 3.0).sin() + (pos.y * 6.0).cos() + (pos.z * 6.0 + time * 2.0).sin() + 1.5) * 0.33;
+        let pulse = (time * 5.0).sin() * 0.25 + 0.75;
+        
+        if heat_pattern > 0.75 {
+            Color::new(255, 255, 220).mul(pulse) // Lava blanca (ultra caliente)
+        } else if heat_pattern > 0.55 {
+            Color::new(255, 230, 120).mul(pulse) // Amarilla
+        } else if heat_pattern > 0.35 {
+            Color::new(255, 150, 50).mul(pulse) // Naranja
+        } else {
+            Color::new(220, 70, 30).mul(pulse) // Roja
+        }
     } else {
-        lava_color.mul(0.7 + lava_pulse * 0.3)
+        // Roca solidificada oscura
+        let rock_var = ((pos.x * 25.0).sin() + (pos.y * 25.0).cos() + 1.0) * 0.5;
+        if rock_var > 0.6 {
+            Color::new(70, 60, 55) // Gris oscuro
+        } else {
+            Color::new(35, 30, 25) // Casi negro
+        }
     };
     
-    // Aplicar grietas brillantes
-    if has_crack {
-        final_color = crack_color;
+    // Grietas ultra brillantes
+    if fine_cracks > 0.88 {
+        let glow_intensity = (fine_cracks - 0.88) / 0.12;
+        let crack_glow = Color::new(255, 220, 100);
+        color = color.lerp(&crack_glow, glow_intensity);
     }
     
-    // Añadir brillo de calor
-    let glow_add = Color::new(
-        (heat_glow * 100.0) as u8,
-        (heat_glow * 50.0) as u8,
-        0
-    );
-    final_color = final_color.add(&glow_add);
+    // Resplandor ambiental
+    let ambient_glow = ((pos.x * 3.0 - time * 0.8).sin() + (pos.z * 3.0 + time * 0.5).cos() + 1.0) * 0.15;
+    let glow_color = Color::new((ambient_glow * 255.0) as u8, (ambient_glow * 120.0) as u8, 0);
+    color = color.add(&glow_color);
     
-    // Iluminación
-    let light_dir = Vec3::new(1.0, 1.0, 1.0).normalize();
+    // Iluminación con auto-emisión
+    let light_dir = Vec3::new(0.8, 0.8, 1.0).normalize();
     let normal = fragment.normal.normalize();
-    let diffuse = normal.dot(&light_dir).max(0.3);
+    let diffuse = normal.dot(&light_dir).max(0.35);
     
-    final_color.mul(diffuse)
+    color.mul(diffuse * 0.5 + 0.5)
 }
 
-// ===== SHADER 6: LUNA (satélite gris con cráteres) =====
-// Capas: 1) Base gris, 2) Cráteres oscuros, 3) Variación de color, 4) Iluminación
+// ===== SHADER 6: LUNA CON CRÁTERES =====
 fn moon_shader(fragment: &Fragment, _uniforms: &Uniforms) -> Color {
-    let pos = fragment.vertex_position;
+    let pos = fragment.vertex_position * 5.0;
     
-    // Capa 1: Base gris
-    let base_color = Color::new(150, 150, 150);
+    // Cráteres con Voronoi
+    let crater_pattern = voronoi_simple(pos * 1.2);
+    let is_crater = crater_pattern < 0.25;
     
-    // Capa 2: Cráteres (círculos oscuros)
-    let crater_freq = 15.0;
-    let crater1 = ((pos.x * crater_freq).sin() * (pos.y * crater_freq).cos()).abs();
-    let crater2 = ((pos.y * crater_freq * 1.3).sin() * (pos.z * crater_freq * 1.3).cos()).abs();
-    let has_crater = crater1 > 0.8 || crater2 > 0.8;
+    // Mares lunares (zonas oscuras)
+    let mare_pattern = ((pos.x * 2.0).sin() * (pos.y * 2.0).cos() + (pos.z * 2.0).sin() + 1.0) * 0.5;
+    let is_mare = mare_pattern < 0.3;
     
-    // Capa 3: Variación de color (manchas más claras/oscuras)
-    let variation_freq = 8.0;
-    let variation = ((pos.x * variation_freq).sin() * 
-                     (pos.z * variation_freq).cos()).abs();
+    // Tierras altas
+    let highland_pattern = ((pos.x * 4.0).sin() + (pos.y * 4.0).cos() + (pos.z * 4.0).sin() + 1.5) * 0.33;
+    let is_highland = highland_pattern > 0.7;
     
-    let dark_gray = Color::new(100, 100, 100);
-    let light_gray = Color::new(180, 180, 180);
-    
-    let final_color = if has_crater {
-        dark_gray
+    let base_color = if is_crater {
+        Color::new(60, 60, 60) // Cráteres oscuros
+    } else if is_mare {
+        Color::new(80, 80, 80) // Mares lunares
+    } else if is_highland {
+        Color::new(190, 190, 190) // Tierras altas brillantes
     } else {
-        base_color.lerp(&light_gray, variation)
+        Color::new(140, 140, 140) // Gris base
     };
     
-    // Capa 4: Iluminación fuerte
-    let light_dir = Vec3::new(1.0, 1.0, 1.0).normalize();
+    // Detalle fino de superficie
+    let fine_detail = ((pos.x * 30.0).sin() * (pos.y * 30.0).cos() + (pos.z * 30.0).sin() + 1.0) * 0.5;
+    let final_color = base_color.mul(0.90 + fine_detail * 0.20);
+    
+    // Iluminación lunar con sombras duras
+    let light_dir = Vec3::new(1.0, 0.3, 0.8).normalize();
     let normal = fragment.normal.normalize();
-    let diffuse = normal.dot(&light_dir).max(0.15);
+    let diffuse = normal.dot(&light_dir).max(0.10);
     
     final_color.mul(diffuse)
 }
