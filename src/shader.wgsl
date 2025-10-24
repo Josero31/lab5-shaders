@@ -4,6 +4,8 @@ struct Uniforms {
     time: f32,
     shader_type: u32,
     resolution: vec2<f32>,
+    planet_position: vec2<f32>,
+    planet_scale: f32,
     _padding: f32,
 }
 
@@ -36,12 +38,14 @@ fn vs_main(input: VertexInput) -> VertexOutput {
         vec3<f32>(-sin_a, 0.0, cos_a)
     );
     
-    let rotated_pos = rot_y * input.position;
+    // Escalar y rotar
+    let scaled_pos = input.position * uniforms.planet_scale;
+    let rotated_pos = rot_y * scaled_pos;
     let rotated_normal = rot_y * input.normal;
     
-    // Proyección simple
+    // Proyección simple con offset de posición
     let pos = rotated_pos * vec3<f32>(1.0, 1.0, 0.5);
-    output.clip_position = vec4<f32>(pos.xy, 0.5, 1.0);
+    output.clip_position = vec4<f32>(pos.xy + uniforms.planet_position, 0.5, 1.0);
     output.world_pos = rotated_pos;
     output.normal = normalize(rotated_normal);
     

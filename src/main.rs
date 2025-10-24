@@ -13,7 +13,9 @@ struct Uniforms {
     time: f32,
     shader_type: u32,
     resolution: [f32; 2],
-    _padding: [f32; 2], // Padding para alineación de 16 bytes
+    planet_position: [f32; 2],
+    planet_scale: f32,
+    _padding: f32,
 }
 
 #[repr(C)]
@@ -174,7 +176,9 @@ impl State {
             time: 0.0,
             shader_type: 1,
             resolution: [size.width as f32, size.height as f32],
-            _padding: [0.0, 0.0],
+            planet_position: [0.0, 0.0],
+            planet_scale: 0.3,
+            _padding: 0.0,
         };
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -281,44 +285,8 @@ impl State {
         }
     }
 
-    fn input(&mut self, event: &KeyEvent) -> bool {
-        if event.state == ElementState::Pressed {
-            match event.physical_key {
-                PhysicalKey::Code(KeyCode::Digit1) => {
-                    self.uniforms.shader_type = 1;
-                    println!("Sol");
-                    true
-                }
-                PhysicalKey::Code(KeyCode::Digit2) => {
-                    self.uniforms.shader_type = 2;
-                    println!("Planeta Rocoso");
-                    true
-                }
-                PhysicalKey::Code(KeyCode::Digit3) => {
-                    self.uniforms.shader_type = 3;
-                    println!("Gigante Gaseoso");
-                    true
-                }
-                PhysicalKey::Code(KeyCode::Digit4) => {
-                    self.uniforms.shader_type = 4;
-                    println!("Planeta con Anillos");
-                    true
-                }
-                PhysicalKey::Code(KeyCode::Digit5) => {
-                    self.uniforms.shader_type = 5;
-                    println!("Planeta Volcánico");
-                    true
-                }
-                PhysicalKey::Code(KeyCode::Digit6) => {
-                    self.uniforms.shader_type = 6;
-                    println!("Luna");
-                    true
-                }
-                _ => false,
-            }
-        } else {
-            false
-        }
+    fn input(&mut self, _event: &KeyEvent) -> bool {
+        false
     }
 
     fn update(&mut self) {
@@ -342,6 +310,41 @@ impl State {
                 label: Some("Render Encoder"),
             });
 
+        // Definir los planetas: [x, y, escala, shader_type]
+        let planets = [
+            [0.0, 0.0, 0.4, 1.0],    // Sol (centro, grande, amarillo)
+            [-0.6, 0.2, 0.15, 2.0],  // Planeta rocoso (izq arriba, pequeño, naranja/roca)
+            [-0.5, -0.3, 0.18, 5.0], // Planeta volcánico (izq abajo, mediano, rojo lava)
+            [0.5, 0.3, 0.3, 3.0],    // Gigante gaseoso (der arriba, grande, bandas)
+            [0.6, -0.2, 0.25, 4.0],  // Planeta con anillos (der abajo, marrón)
+            [0.2, -0.5, 0.12, 6.0],  // Luna/planeta helado (abajo centro, pequeño, gris)
+        ];
+
+        // Crear buffers y bind groups para cada planeta ANTES del render pass
+        let planet_data: Vec<_> = planets.iter().map(|planet| {
+            let mut uniforms = self.uniforms;
+            uniforms.planet_position = [planet[0], planet[1]];
+            uniforms.planet_scale = planet[2];
+            uniforms.shader_type = planet[3] as u32;
+
+            let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Uniform Buffer"),
+                contents: bytemuck::cast_slice(&[uniforms]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &self.render_pipeline.get_bind_group_layout(0),
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                }],
+                label: Some("uniform_bind_group"),
+            });
+
+            (uniform_buffer, bind_group)
+        }).collect();
+
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -350,9 +353,9 @@ impl State {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.15,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -364,10 +367,14 @@ impl State {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+
+            // Dibujar cada planeta usando su bind group
+            for (_buffer, bind_group) in &planet_data {
+                render_pass.set_bind_group(0, bind_group, &[]);
+                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -383,21 +390,15 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(
         winit::window::WindowBuilder::new()
-            .with_title("Lab 5 - Shaders Procedurales")
-            .with_inner_size(winit::dpi::LogicalSize::new(800, 800))
+            .with_title("Lab 5 - Sistema Solar Procedural")
+            .with_inner_size(winit::dpi::LogicalSize::new(1000, 800))
             .build(&event_loop)
             .unwrap(),
     );
 
     let mut state = pollster::block_on(State::new(window.clone()));
 
-    println!("=== Controles ===");
-    println!("1: Sol");
-    println!("2: Planeta Rocoso");
-    println!("3: Gigante Gaseoso");
-    println!("4: Planeta con Anillos");
-    println!("5: Planeta Volcánico");
-    println!("6: Luna");
+    println!("=== Sistema Solar - 6 Cuerpos Celestes ===");
     println!("ESC: Salir");
 
     event_loop
