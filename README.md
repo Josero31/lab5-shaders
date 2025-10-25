@@ -63,3 +63,8 @@ lab5-shaders/
 ---
 
 **Lab 5 - Gráficas por Computadora**
+
+## Imagen del laboratorio 
+<img width="1252" height="1041" alt="Captura de pantalla 2025-10-24 175750" src="https://github.com/user-attachments/assets/7711240f-e097-4f67-ba62-ae21efd22cd0" />
+
+
